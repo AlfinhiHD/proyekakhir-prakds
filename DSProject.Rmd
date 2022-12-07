@@ -1,0 +1,183 @@
+---
+title: "Project Data Science - Analisis Sentimen Review Objek Wisata Disneyland Hong Kong Pada Website Tripadvisor"
+name: "Abid Bilal Al Ghazali - 123200069, Alfinhi Hajid Dhia - 123200142"
+output: html_document
+date: "2022-11-23"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r}
+# memuat library yang dipakai
+
+library(tm)        # data cleaning
+library(tidyr)     # data tidying
+library(vroom)     # load dataset
+library(here)      # save dataset
+library(dplyr)     # manipulasi data
+library(syuzhet)   # membaca fungsi get_nrc_sentiment
+library(e1071)     # naive bayes
+library(caret)     # klasifikasi data
+library(shiny)     # tampilan GUI
+library(ggplot2)   # visualisasi data
+library(wordcloud) # membuat wordcloud
+```
+
+```{r}
+# memuat dataset yang akan dibersihkan
+
+# memuat dan menampilkan dataset
+datascience <- read.csv(here("DisneylandHongkongReviews.csv"))
+datascience
+
+# memilih kolom yang diperlukan untuk klasifikasi
+datascience %>% select(-1:-4)
+```
+
+```{r}
+# data cleaning 
+
+# menghapus special characterm serta tanda baca seperti comma, titik comma, url, dll.
+
+ulasan <- datascience$Review_Text
+ulasan1 <- Corpus(VectorSource(ulasan))
+removeURL <- function(x) gsub("http[^[:space:]]*", "", x)
+reviewclean <- tm_map(ulasan1, removeURL)
+removeNL <- function(y) gsub("\n", " ", y)
+reviewclean <- tm_map(reviewclean, removeNL)
+replacecomma <- function(y) gsub(",", "", y)
+reviewclean <- tm_map(reviewclean, replacecomma)
+removetitik2 <- function(y) gsub(":", "", y)
+reviewclean <- tm_map(reviewclean, removetitik2)
+removetitikkoma <- function(y) gsub(";", " ", y)
+reviewclean <- tm_map(reviewclean, removetitikkoma)
+removetitik3 <- function(y) gsub("p…", "", y)
+reviewclean <- tm_map(reviewclean, removetitik3)
+removeamp <- function(y) gsub("&amp;", "", y)
+reviewclean <- tm_map(reviewclean, removeamp)
+removeUN <- function(z) gsub("@\\w+", "", z)
+reviewclean <- tm_map(reviewclean, removeUN)
+remove.all <- function(xy) gsub("[^[:alpha:][:space:]]*", "", xy)
+reviewclean <- tm_map(reviewclean,remove.all)
+reviewclean <- tm_map(reviewclean, removePunctuation)
+reviewclean <- tm_map(reviewclean, tolower)
+myStopwords = readLines("stopwords-en.txt")
+reviewclean <- tm_map(reviewclean,removeWords,myStopwords)
+
+dataframe<-data.frame(Reviews=unlist(sapply(reviewclean, `[`)), stringsAsFactors=F)
+View(dataframe)
+write.csv(dataframe,file = 'dataclean.csv')
+```
+
+```{r}
+prosesdata <- read.csv("dataclean.csv")
+review <- as.character(prosesdata$Reviews)
+s <- get_nrc_sentiment(review, cl = NULL, language = "english", lowercase =TRUE)
+
+# klasifikasi data
+review_combine <- cbind(prosesdata$Reviews, s)
+par(mar = rep(3, 4))
+datanew <- barplot(colSums(s), col = rainbow(10), xlab = 'emotion', ylab = 'count', main = 'Sentiment Analysis - Disneyland Hong Kong')
+datanew
+```
+
+```{r}
+dc <- read.csv("dataclean.csv", stringsAsFactors = FALSE)
+
+wordcloud(dc,min.freq = 4,max.words=100,random.order=F,colors=brewer.pal(8,"Dark2"))
+
+```
+
+
+```{r}
+library(dplyr)
+
+class_sentiment <- data.frame(negative=s$negative,positive=s$positive)
+klasifikasi <- mutate(class_sentiment, text_sentiment = ifelse((class_sentiment$negative != class_sentiment$positive),
+                                                               ifelse(class_sentiment$negative!=0,print("negative"),
+                                                                      print("positive")),print("neutral")))
+data_disney <- data.frame(text=review,s=klasifikasi$text_sentiment)
+View(data_disney)
+```
+
+
+```{r}
+
+#Menampilkan barplot representasi 5 kata yang sering muncul
+data_disney = as.factor(dc$Reviews)
+corpus = Corpus(VectorSource(data_disney))
+tdm <- TermDocumentMatrix(corpus)
+tdm <- removeSparseTerms(tdm, sparse = 0.98)
+tdm <- as.matrix(tdm)
+w = sort(rowSums(tdm), decreasing = T)
+barplot(w[1:5],
+        las=2,
+        main = "Frequency of Words",
+        col= rainbow(20))
+```
+
+
+```{r}
+data <- vroom("dataclean.csv")
+aplikasi <- data$text
+
+ui <- fluidPage(
+  titlePanel("HASIL ANALISIS SENTIMEN REVIEW OBYEK WISATA DISNEYLAND HONG KONG PADA WEBSITE TRIPADVISOR"),
+    mainPanel(
+      tabsetPanel(type = "tabs",
+                  tabPanel("Data", DT::dataTableOutput('tbl')),
+                  tabPanel("Bar Plot", plotOutput("barplot")),
+                  tabPanel("Sentiment Analysis", DT::dataTableOutput("sentiment")),
+                  tabPanel("Frequency Word", plotOutput("freqwords")),
+                  tabPanel("Word Cloud", plotOutput("Wordcloud"))
+                  
+      )
+    )
+)
+
+server <- function(input,output){
+  
+  output$tbl = DT::renderDataTable({
+    datatabel <-read.csv("dataclean.csv",stringsAsFactors = FALSE)
+    DT::datatable(datatabel, options= list(lengthChange = FALSE))
+  })
+  
+  output$barplot <- renderPlot({
+    barplot( 
+        colSums(s),
+        col=rainbow(10),
+        ylab='count',
+        main='Sentiment Analysis - Disneyland Hong Kong')
+  })
+      
+  output$Wordcloud <- renderPlot({
+    wordcloud(corpus, min.freq = 3,
+            max.words=100, random.order=FALSE, rot.per=0.40, 
+            colors=brewer.pal(8, "Dark2"))
+  })
+  
+  output$sentiment <- DT::renderDataTable({
+    DT::datatable(data_disney, options= list(lengthChange = FALSE))
+
+  })
+  
+  output$freqwords<- renderPlot({
+    barplot(w[1:5],
+        las=2,
+        main = "Frequency of Words",
+        col= rainbow(20))
+  })
+  
+}
+
+
+shinyApp(ui = ui, server = server)
+```
